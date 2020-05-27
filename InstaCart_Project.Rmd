@@ -1,0 +1,219 @@
+---
+title: "InstaCart Project"
+author: "Jean-Pierre Rouhana"
+date: "May 15, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Loading the Libraries
+```{r}
+library(dplyr)
+library(rpart)
+library(randomForest)
+library(tidyverse)
+library(caret)
+
+```
+
+## Importing Data
+```{r}
+library(readr)
+products <- read_csv("instacart-market-basket-analysis/products.csv")
+aisles <- read_csv("instacart-market-basket-analysis/ailes.csv")
+departments <- read_csv("instacart-market-basket-analysis/departments.csv")
+orders <- read_csv("instacart-market-basket-analysis/orders.csv")
+order_products_prior <- read_csv("instacart-market-basket-analysis/order_products_prior.csv")
+order_products_train <- read_csv("instacart-market-basket-analysis/order_products_train.csv")
+
+```
+
+
+## Cleaning the Data
+```{r}
+
+
+```
+## Creating The Base Data Frame
+```{r}
+All.Orders = merge(order_products_prior, orders)
+All.Orders2 = merge(order_products_train, orders, by="order_id")
+Combined.Orders = rbind(All.Orders,All.Orders2)
+Combined.Orders <- merge(Combined.Orders, products, by = "product_id")
+Combined.Orders$reordered <- as.factor(Combined.Orders$reordered)
+
+```
+
+
+# Creating And Alter The variables
+
+## Altering Existing Variables
+```{r}
+## Turning Important Variables into factor variables
+Combined.Orders$user_id <- as.factor(Combined.Orders$user_id)
+
+```
+
+
+
+```{r}
+#####       Creating a dataframe to organize Information on users      #####
+User.data <- data.frame(unique(Combined.Orders[,5]))
+
+User.Reordered <-Combined.Orders %>%
+  group_by(user_id) %>%
+  count(reordered)
+
+## proportion by User
+id.list <- as.character(unique(Combined.Orders$user_id))
+re.prop <- c()
+for (userid in id.list)
+
+{
+  #userid <- "1"
+  subset <- User.Reordered[User.Reordered$user_id==userid,]
+  if (nrow(subset)==1)
+    pro <- subset$reordered 
+  if (nrow(subset)>1)
+  {
+  
+    total <- sum(subset$n)
+    pro <- subset$n[subset$reordered==1]/total
+    
+  }
+  
+  #pro <- if(subset$n[subset$reordered==1]){subset$n[subset$reordered]==1/total} if(is.null(subset$n[subset$reordered]==0 )){0}                                                
+  re.prop <- append(re.prop, pro)
+
+}
+User.data <- data.frame(user_id=id.list, reorder.prop=re.prop)
+
+
+#########   User  Proportion Reorders
+User_Reorders <- Combined.Orders %>%
+  group_by(user_id) %>%
+  summarize(user_prop_reordered = mean(reordered), total_orders=n())
+```
+
+
+## Creating variables for Products
+```{r}
+
+# Product Reorders
+item_reorders <- Combined.Orders %>%
+  group_by(product_id) %>%
+  summarize(proportion_reordered = mean(reordered), n=n())
+
+#Creating a count for each product
+ProductCounts <- Combined.Orders %>%
+  group_by(product_id) %>%
+  count(product_id, name = "product_orders")
+
+ProductCounts <- merge(ProductCounts, item_reorders, by = "product_id")
+
+```
+
+## Completing the dataset
+```{r}
+ProductCounts$n <- NULL
+Combined.Orders <- merge(ProductCounts, Combined.Orders, by = "product_id")
+
+Combined.Orders <- merge(User_Reorders, Combined.Orders , by = "user_id")
+Combined.Orders$order_dow <- as.factor(Combined.Orders$order_dow)
+Combined.Orders <- merge(products, Combined.Orders, by = "product_id")
+
+## Cleaning Data set
+Combined.Orders$reordered <- as.factor(Combined.Orders$reordered)
+Combined.Orders <- na.omit(Combined.Orders)
+Combined.Orders$department_id <- as.factor(Combined.Orders$department_id)
+```
+
+## Logistic Regression Model
+```{r}
+attach(Combined.Orders)
+set.seed(1)
+
+Accuracy <- function(table)
+{
+ n11 <- table[1,1] 
+ n22 <- table[2,2]
+ Total <- table[1,1]+table[2,2]+table[2,1]+table[1,2]
+ Total
+ return((n11+n22)/Total)
+}
+
+
+## Splitting the Data
+Train<- sample(1:nrow(Combined.Orders), nrow(Combined.Orders)*.8)
+Training.Orders <- Combined.Orders[Train,]
+Test.Orders <- Combined.Orders[-Train,]
+
+## Model Selection
+Full.LogModel <- step(Full.LogModel , direction ="backward")
+
+
+## Creating The Models
+
+##Model 1
+Logistic.TestModel1 <- glm(reordered ~ user_prop_reordered + proportion_reordered + product_orders + total_orders + add_to_cart_order + order_dow + days_since_prior_order, family = binomial, data = Training.Orders)
+summary(Logistic.TestModel1)
+
+
+## Further Analysis
+
+## Prediction and Accuracy
+library(caret)
+ProbM1 <- predict.glm(Logistic.TestModel1, newdata = Test.Orders, type = "response")
+PredM1 <- ifelse(ProbM1 > .5, "1" , "0")
+TableM1 <- table(PredM1, Test.Orders$reordered)
+TableM1
+Accuracy(TableM1)
+
+## ROC 
+#install.packages("pROC")
+#library(pROC)
+#plot(roc(Test.Orders$reordered, PredM1 , direction=">"), #col="yellow", lwd=3, main="Reordering ROC")
+
+## Model 2
+Logistic.TestModel2 <- glm(reordered ~ user_prop_reordered + proportion_reordered + product_orders + total_orders + add_to_cart_order + order_dow + days_since_prior_order + department_id, family = binomial, data = Training.Orders)
+summary(Logistic.TestModel2)
+
+LogModel <- capture.output(Logistic.TestModel2)
+
+ProbM2 <- predict.glm(Logistic.TestModel2, newdata = Test.Orders, type = "response")
+PredM2 <- ifelse(ProbM2 > .5, "1" , "0")
+TableM2 <- table(PredM2, Test.Orders$reordered) 
+TableM2
+
+
+Accuracy(TableM2)
+```
+
+
+## Tree Classification
+```{r}
+library(rpart)
+Tree.TestModel <- rpart(reordered ~ user_prop_reordered + proportion_reordered + product_orders + total_orders + add_to_cart_order + order_dow + days_since_prior_order + department_id,method = "class", data = Training.Orders)
+
+Tree.TestModelR <- capture.output(summary(my_very_time_consuming_regression))
+
+
+plot(Tree.TestModel)
+text(Tree.TestModel)
+
+Pred.Tree <- predict(Tree.TestModel, newdata = Test.Orders, type = "class")
+Tree.Table <- table(Pred.Tree, Test.Orders$reordered)
+Tree.Table
+
+Accuracy(Tree.Table)
+```
+
+## Support Vector Machines
+```{r}
+library(e1071)
+SVM.TestModel <- svm(reordered ~ user_prop_reordered + proportion_reordered + product_orders + total_orders + add_to_cart_order + order_dow + days_since_prior_order + department_id, data = Training.Orders)
+
+```
