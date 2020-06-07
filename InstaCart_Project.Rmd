@@ -1,6 +1,6 @@
 ---
 title: "InstaCart Project"
-author: "Jean-Pierre Rouhana"
+author: "CuddlyCuddle"
 date: "May 15, 2019"
 output: html_document
 ---
